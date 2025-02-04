@@ -27,4 +27,40 @@ class ModelArgs:
 class Transformer(nn.Module):
     def __init__(self, args: ModelArgs) -> None:
         super().__init__()
+
+        assert args.vocab_size != -1, "vocab_size must be set"
         self.args = args
+        self.vocab_size = args.vocab_size
+        self.n_layers = args.n_layers
+        self.tok_embeddings = nn.Embedding(args.vocab_size, args.dim)
+
+        self.n_layers = nn.ModuleList()
+
+        for _ in range(self.n_layers):
+            self.n_layers.append(EncoderBlock(args))
+        
+        self.norm = RMSNorm(args.dim, eps=args.norm_eps)
+        self.output = nn.Linear(args.dim, args.vocab_size, bias=False)
+
+        self.freqs_complex = precompute_theta_pos_frequencies(self.args.dim // self.args.n_heads, self.args.max_seq_len * 2, device=self.args.device)
+
+    def forward(self, tokens: torch.Tensor, start_pos: int):
+        # (batch, seq_len)
+
+        batch_size, seq_len = tokens.shape
+        assert seq_len == 1, "only one token at a time"
+
+        h = self.tok_embeddings(tokens)
+
+        # retrive (m, theta) corresponding to pos [stary_pos, start_pos + seq_len]
+        freqs_complex = self.freqs_complex[start_pos: start_pos + seq_len]
+
+        ## next layers
+        for layer in self.n_layers:
+            h = layer(h, start_pos, freqs_complex)
+
+        h = self.norm(h)
+        logits = self.output(h).float()
+
+        return logits
+
