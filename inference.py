@@ -1,5 +1,4 @@
 from typing import Optional
-
 import torch
 import time
 from pathlib import Path
@@ -128,10 +127,14 @@ if __name__ == "__main__":
     allow_cuda = False
     device = "cuda" if allow_cuda and torch.cuda.is_available() else "cpu"
     model = LLaMA.build(
-        checkpoint_path="checkpoints",
+        checkpoint_path="Llama-2-7b",
         tokenizer_path="tokenizer.model",
         load_model=True,
         max_seq_len=2048,
         max_batch_size=1,
         device=device
     )
+
+    out_tokens, out_text = model.text_completion(["The quick brown fox jumps over the lazy dog."], max_gen_len=128)
+
+    print(out_text)
