@@ -24,6 +24,66 @@ class ModelArgs:
     device: str = None
 
 
+def precompute_theta_pos_frequencies(head_dim: int, seq_len: int, device: str, theta: float = 10000.0):
+    assert head_dim % 2 == 0, "dim must be even"
+
+    ## build theta 
+    ## acc to formula theta = 10000^-2(i - 1)/dim
+    ## shape (Head_Dim / 2)
+
+    theta_numerator = torch.arange(0, head_dim, 2).float()
+    ## shape (Head_Dim / 2)
+    theta = 1.0 / (theta ** (theta_numerator / head_dim)).to(device)
+
+    m = torch.arange(seq_len, device=device)
+
+    freqs = torch.outer(m, theta).float()
+
+    freqs_complex = torch.polar(torch.ones_like(freqs), freqs)
+
+    return freqs_complex
+
+def apply_rotary_emb(x: torch.Tensor, freqs_complex: torch.Tensor, device: str): 
+    x_complex = torch.view_as_complex(x.float().reshape(*x.shape[:-1], -1, 2))
+    freqs_complex = freqs_complex.unsqueeze(0).unsqueeze(2)
+    x_rotated = x_complex * freqs_complex
+    return torch.view_as_real(x_rotated).reshape(*x.shape).type_as(x).to(device)
+
+
+class RMSNorm(nn.Module):
+    def __init__(self, dim, eps=1e-6):
+        super().__init__()
+        self.eps = eps
+        self.w = nn.Parameter(torch.ones(dim))
+    
+    def _norm(self, x: torch.Tensor):
+        return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
+
+    def forward(self, x: torch.Tensor):
+        return self.w * self._norm(x.float()).type_as(x)
+    
+
+class SelfAttention(nn.Module):
+
+class EncoderBlock(nn.Module):
+    def __init__(self, args: ModelArgs) -> None:
+        super().__init__()
+        self.dim = args.dim
+        self.n_heads = args.n_heads
+        self.head_dim = self.dim // self.n_heads
+
+        self.attention = SelfAttention(args)
+        self.feed_forward = FeedForward(args)
+
+        self.attention_norm = RMSNorm(self.dim, eps=args.norm_eps)
+        self.ffn_norm = RMSNorm(self.dim, eps=args.norm_eps)
+    
+    def forward(self, x: torch.Tensor, start_pos: int, freqs_complex: torch.Tensor):
+        # (batch, seq_len, dim) + (Batch, seq_len, dim) -> (Batch, seq_len, dim)
+        h = x + self.attention(self.attention_norm(x), start_pos, freqs_complex)
+        out = h + self.feed_forward(self.ffn_norm(h))
+        return out
+
 class Transformer(nn.Module):
     def __init__(self, args: ModelArgs) -> None:
         super().__init__()
